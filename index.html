@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>食物繊維計算ツール（拡張版）</title>
+<style>
+  :root{
+    --max-width:900px;
+    --accent:#2b7cff;
+    --danger:#e74c3c;
+    --muted:#666;
+  }
+  body{font-family:system-ui,-apple-system,Helvetica,Arial,"Noto Sans JP",sans-serif;margin:0;background:#f4f6fb;color:#111;}
+  .wrap{max-width:var(--max-width);margin:18px auto;padding:18px;background:#fff;border-radius:10px;box-shadow:0 6px 18px rgba(20,30,60,0.06);}
+  h1{margin:0 0 10px 0;font-size:1.2rem;text-align:center;}
+  p.note{margin:6px 0 16px 0;color:var(--muted);font-size:0.9rem;}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
+  .controls .col{flex:1;min-width:160px;position:relative;}
+  input[type="text"], input[type="number"], select{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;font-size:1rem}
+  button{background:var(--accent);color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font-weight:600}
+  button.secondary{background:#f0f0f0;color:#111}
+  .hint{font-size:0.85rem;color:var(--muted);margin-top:8px}
+  .suggestions{position:absolute;left:0;right:0;top:calc(100% + 6px);background:#fff;border:1px solid #ddd;border-radius:8px;max-height:260px;overflow:auto;z-index:9999;box-shadow:0 6px 18px rgba(20,30,60,0.06);display:none}
+  .suggestions div{padding:8px 10px;cursor:pointer;white-space:nowrap}
+  .suggestions div:hover,.suggestions .active{background:#f0f6ff}
+  .rowlist{margin-top:16px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:0.95rem}
+  th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:left;vertical-align:middle}
+  th{background:#fafafa;font-weight:700}
+  td.right{text-align:right}
+  .del{background:var(--danger);color:#fff;border:none;padding:6px 8px;border-radius:6px;cursor:pointer}
+  .totals{margin-top:12px;padding:12px;border-radius:8px;background:#fafafa;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .goal{font-size:0.95rem;color:var(--muted)}
+  @media (max-width:720px){
+    .controls{flex-direction:column}
+    .suggestions{max-height:180px}
+    th,td{font-size:0.9rem}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>食物繊維計算ツール（拡張版）</h1>
+    <p class="note">※ 摂取量はグラム (g) で入力してください。値は 100g あたりの食物繊維量 (g) の目安です。男性約21g・女性約18g/日 が目安。</p>
+
+    <div class="controls">
+      <div class="col">
+        <label for="food">食材・料理</label>
+        <input id="food" type="text" placeholder="食材名を入力（候補から選択してください）" autocomplete="off" />
+        <div id="suggest" class="suggestions" role="listbox"></div>
+        <div class="hint" id="fiberPer100Hint"></div>
+      </div>
+
+      <div class="col" style="max-width:180px;">
+        <label for="amount">摂取量 (g)</label>
+        <input id="amount" type="number" inputmode="decimal" step="any" placeholder="例: 100" />
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <button id="addBtn">追加</button>
+        <button id="clearBtn" class="secondary">クリア</button>
+      </div>
+    </div>
+
+    <div class="rowlist">
+      <table id="table">
+        <thead>
+          <tr>
+            <th style="width:40%">食材・料理</th>
+            <th style="width:18%">摂取量 (g)</th>
+            <th style="width:22%">100gあたり繊維 (g)</th>
+            <th style="width:10%" class="right">量 (g)</th>
+            <th style="width:10%">削除</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="totals">
+      <div class="goal"><strong id="total">合計食物繊維量: 0.00 g</strong></div>
+      <div class="goal">目安 — 成人男性: 約 <strong>21 g</strong> / 日、成人女性: 約 <strong>18 g</strong> / 日</div>
+    </div>
+  </div>
+
+<script>
+/*
+  大量食材データ（name: 表示名, fiber: 100gあたりの食物繊維量[ g ]）
+  魚類はカタカナ表記。他は日本人が一般的に使う表記にしています。
+  ※ 値は目安です。必要ならさらに修正してください。
+*/
+const foodData = [
+  /* 野菜・きのこ */
+  {name:"アスパラガス",fiber:2.1},{name:"インゲン",fiber:6.5},{name:"オクラ",fiber:3.2},
+  {name:"かぼちゃ",fiber:2.0},{name:"きゅうり",fiber:0.5},{name:"キャベツ",fiber:2.5},
+  {name:"ごぼう",fiber:5.7},{name:"さつまいも",fiber:3.0},{name:"しそ",fiber:6.7},
+  {name:"しいたけ",fiber:2.5},{name:"しめじ",fiber:2.5},{name:"セロリ",fiber:1.6},
+  {name:"たまねぎ",fiber:1.7},{name:"なす",fiber:2.5},{name:"にんじん",fiber:2.8},
+  {name:"にんにく",fiber:2.1},{name:"ねぎ",fiber:2.5},{name:"白菜",fiber:1.6},
+  {name:"ほうれん草",fiber:2.2},{name:"まいたけ",fiber:2.7},{name:"もやし",fiber:1.3},
+  {name:"山芋",fiber:1.9},{name:"れんこん",fiber:4.0},{name:"ブロッコリー",fiber:4.4},
+  {name:"芽キャベツ",fiber:3.8},{name:"カリフラワー",fiber:2.0},{name:"ズッキーニ",fiber:1.1},
+  {name:"パプリカ",fiber:1.5},{name:"アボカド",fiber:6.7},{name:"水菜",fiber:1.4},
+  {name:"小松菜",fiber:1.9},{name:"春菊",fiber:2.2},{name:"さやえんどう",fiber:6.0},
+  {name:"えだまめ",fiber:5.0},{name:"大根",fiber:1.4},{name:"葉ねぎ",fiber:1.8},
+
+  /* きのこ追加 */
+  {name:"えのきだけ",fiber:3.9},{name:"マッシュルーム",fiber:1.0},{name:"ポルチーニ",fiber:2.8},
+
+  /* 果物 */
+  {name:"りんご",fiber:1.9},{name:"バナナ",fiber:2.6},{name:"みかん",fiber:1.9},
+  {name:"いちご",fiber:2.0},{name:"キウイフルーツ",fiber:3.0},{name:"ブルーベリー",fiber:2.4},
+  {name:"オレンジ",fiber:2.2},{name:"ぶどう",fiber:0.9},{name:"もも",fiber:1.1},
+  {name:"グレープフルーツ",fiber:1.4},{name:"パイナップル",fiber:1.4},
+  {name:"マンゴー",fiber:1.6},{name:"すいか",fiber:0.2},
+
+  /* 豆類・ナッツ */
+  {name:"大豆",fiber:15.7},{name:"あずき",fiber:7.3},{name:"納豆",fiber:6.7},
+  {name:"豆腐",fiber:0.4},{name:"ピーナッツ",fiber:8.5},{name:"アーモンド",fiber:12.5},
+  {name:"くるみ",fiber:6.7},{name:"ごま",fiber:11.8},{name:"黒豆",fiber:16.0},
+  {name:"えんどう豆",fiber:7.0},{name:"レンズ豆",fiber:8.0},
+
+  /* 穀物 */
+  {name:"白米",fiber:0.5},{name:"玄米",fiber:3.0},{name:"もち",fiber:0.6},
+  {name:"食パン",fiber:2.7},{name:"全粒粉パン",fiber:6.0},{name:"そば",fiber:3.0},
+  {name:"うどん",fiber:1.0},{name:"ラーメン（生）",fiber:1.2},{name:"そうめん",fiber:0.3},
+  {name:"オートミール",fiber:9.4},{name:"シリアル（全粒）",fiber:7.0},
+
+  /* 魚介類（カタカナ表記）*/
+  {name:"アジ",fiber:0},{name:"イワシ",fiber:0},{name:"ウナギ",fiber:0},{name:"エビ",fiber:0},
+  {name:"カツオ",fiber:0},{name:"サケ",fiber:0},{name:"サバ",fiber:0},{name:"タコ",fiber:0},
+  {name:"タイ",fiber:0},{name:"マグロ",fiber:0},{name:"イカ",fiber:0},{name:"ホタテ",fiber:0},
+  {name:"ヒラメ",fiber:0},{name:"ブリ",fiber:0},{name:"サンマ",fiber:0},
+
+  /* 肉類・乳製品 */
+  {name:"鶏肉（胸）",fiber:0},{name:"鶏肉（もも）",fiber:0},{name:"豚肉",fiber:0},{name:"牛肉",fiber:0},
+  {name:"ハム",fiber:0},{name:"ベーコン",fiber:0},{name:"チーズ",fiber:0},{name:"ヨーグルト",fiber:0},
+  {name:"牛乳",fiber:0},{name:"バター",fiber:0},
+
+  /* 調味料・副材 */
+  {name:"しょうゆ",fiber:0.5},{name:"味噌",fiber:4.7},{name:"みりん",fiber:0},{name:"酢",fiber:0},
+  {name:"砂糖",fiber:0},{name:"塩",fiber:0},{name:"マヨネーズ",fiber:0},{name:"ケチャップ",fiber:0.5},
+  {name:"カレー粉",fiber:10.9},{name:"ごま油",fiber:0},{name:"オリーブオイル",fiber:0},
+
+  /* 加工食品・惣菜・菓子 */
+  {name:"天ぷら",fiber:1.0},{name:"コロッケ",fiber:1.2},{name:"カレーライス",fiber:3.5},
+  {name:"ハンバーグ",fiber:1.0},{name:"ピザ",fiber:1.0},{name:"スパゲッティ",fiber:1.8},
+  {name:"オムライス",fiber:1.5},{name:"おにぎり",fiber:0.5},{name:"寿司（握り）",fiber:1.0},
+  {name:"うな重",fiber:0},{name:"ラーメン（丼）",fiber:1.5},{name:"ビビンバ",fiber:4.5},
+
+  /* 中華・韓国など */
+  {name:"餃子",fiber:1.2},{name:"焼売",fiber:0.8},{name:"麻婆豆腐",fiber:2.5},{name:"酢豚",fiber:2.0},
+  {name:"海老チリ",fiber:0},{name:"チヂミ",fiber:2.5},{name:"キムチ",fiber:1.5},{name:"キムチチゲ",fiber:3.0},
+
+  /* 乾物・海藻 */
+  {name:"わかめ（乾）",fiber:35.0},{name:"ひじき（乾）",fiber:43.3},{name:"昆布（乾）",fiber:27.1},
+  {name:"干し椎茸",fiber:14.8},
+
+  /* 飲料・その他 */
+  {name:"黒酢",fiber:0},{name:"豆乳",fiber:0.3},
+
+  /* 追加でポピュラーな食材・副菜 */
+  {name:"きんぴらごぼう",fiber:5.7},{name:"味噌汁（具あり）",fiber:1.5},{name:"なめこ汁",fiber:2.0},
+  {name:"かつおぶし",fiber:0},{name:"梅干し",fiber:1.5},{name:"たまご焼き",fiber:0},
+
+  /* もう少し補充（パン・惣菜・果実・ナッツ等） */
+  {name:"カボチャの煮物",fiber:2.8},{name:"イモのサラダ",fiber:1.3},{name:"ポテトサラダ",fiber:1.0},
+  {name:"ドライフルーツ（プルーン）",fiber:7.1},{name:"レーズン",fiber:3.7},
+
+  /* さらに一般的なもの */
+  {name:"コーン",fiber:2.0},{name:"枝豆（冷凍）",fiber:4.3},{name:"グラノーラ",fiber:6.5},
+  {name:"プロセスチーズ",fiber:0},{name:"生クリーム",fiber:0}
+];
+
+/* --- UI 要素 --- */
+const foodInput = document.getElementById('food');
+const amountInput = document.getElementById('amount');
+const suggestBox = document.getElementById('suggest');
+const fiberPer100Hint = document.getElementById('fiberPer100Hint');
+const addBtn = document.getElementById('addBtn');
+const clearBtn = document.getElementById('clearBtn');
+const tbody = document.getElementById('tbody');
+const totalEl = document.getElementById('total');
+
+/* キーボードでの選択用インデックス */
+let currentFocus = -1;
+
+/* 大量候補表示：すべて表示できるようにページングや絞り込みは行わない（全件表示） */
+
+/* ヘルパー: 食材名からデータを返す（厳密一致） */
+function findFoodByName(name) {
+  return foodData.find(f => f.name === name);
+}
+
+/* 候補表示 */
+function showSuggestions(evt) {
+  const val = foodInput.value.trim();
+  suggestBox.innerHTML = '';
+  currentFocus = -1;
+
+  // マッチ判定（大文字小文字を意識しない。同一表記は日本語なので includes で十分）
+  let matches;
+  if (val === '') {
+    // 空入力なら全候補表示（ユーザーの要求により全表示）
+    matches = foodData.slice(); // コピー
+  } else {
+    matches = foodData.filter(f => f.name.indexOf(val) !== -1);
+  }
+
+  if (matches.length === 0) {
+    const no = document.createElement('div');
+    no.textContent = '候補なし';
+    no.style.color = '#888';
+    suggestBox.appendChild(no);
+    suggestBox.style.display = 'block';
+    updateFiberHint(null);
+    return;
+  }
+
+  // 作成
+  matches.forEach((m, idx) => {
+    const d = document.createElement('div');
+    d.textContent = m.name + `（100gあたり ${m.fiber} g）`;
+    d.setAttribute('data-index', idx);
+    d.addEventListener('click', e => {
+      foodInput.value = m.name;
+      updateFiberHint(m);
+      suggestBox.style.display = 'none';
+      amountInput.focus();
+    });
+    suggestBox.appendChild(d);
+  });
+
+  suggestBox.style.display = 'block';
+}
+
+/* ヒント欄の更新 */
+function updateFiberHint(food) {
+  if (!food) {
+    fiberPer100Hint.textContent = '';
+  } else {
+    fiberPer100Hint.textContent = `100gあたりの食物繊維: ${food.fiber} g`;
+  }
+}
+
+/* キーボード操作 */
+foodInput.addEventListener('keydown', function(e){
+  const items = suggestBox.querySelectorAll('div');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') {
+    currentFocus++;
+    if (currentFocus >= items.length) currentFocus = 0;
+    setActive(items);
+    e.preventDefault();
+  } else if (e.key === 'ArrowUp') {
+    currentFocus--;
+    if (currentFocus < 0) currentFocus = items.length -1;
+    setActive(items);
+    e.preventDefault();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (currentFocus > -1) {
+      items[currentFocus].click();
+    } else {
+      // Enterで入力確定（ただし候補が厳密一致しなければヒントは無効）
+      const exact = findFoodByName(foodInput.value.trim());
+      updateFiberHint(exact || null);
+      amountInput.focus();
+    }
+  }
+});
+function setActive(items) {
+  items.forEach(it => it.classList.remove('active'));
+  if (currentFocus >= 0 && items[currentFocus]) {
+    items[currentFocus].classList.add('active');
+    // スクロールをフォロー
+    const a = items[currentFocus];
+    const boxTop = suggestBox.scrollTop;
+    const boxBottom = boxTop + suggestBox.clientHeight;
+    const aTop = a.offsetTop;
+    const aBottom = aTop + a.clientHeight;
+    if (aTop < boxTop) suggestBox.scrollTop = aTop;
+    if (aBottom > boxBottom) suggestBox.scrollTop = aBottom - suggestBox.clientHeight;
+  }
+}
+
+/* マウスオーバー（PC用）：枠に乗せるだけで候補表示 */
+foodInput.addEventListener('mouseenter', function(){ showSuggestions(); });
+foodInput.addEventListener('focus', function(){ showSuggestions(); });
+foodInput.addEventListener('input', function(){
+  showSuggestions();
+  const exact = findFoodByName(this.value.trim());
+  updateFiberHint(exact || null);
+});
+/* クリック外で閉じる（タップやクリック） */
+document.addEventListener('click', function(e){
+  if (!e.target.closest('.col') && !e.target.closest('.suggestions') && e.target !== foodInput) {
+    suggestBox.style.display = 'none';
+  }
+  if (!e.target.closest('#food')) {
+    // do nothing
+  }
+});
+
+/* 行追加 */
+addBtn.addEventListener('click', addRow);
+clearBtn.addEventListener('click', function(){
+  // 入力欄クリアのみ
+  foodInput.value = '';
+  amountInput.value = '';
+  updateFiberHint(null);
+});
+
+/* 入力で Enter 押したら追加（amount にフォーカスで Enter も追加） */
+amountInput.addEventListener('keydown', function(e){
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addRow();
+  }
+});
+foodInput.addEventListener('keydown', function(e){
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    // 候補が開いていてフォーカスがある場合は選択済みにする
+    const exact = findFoodByName(foodInput.value.trim());
+    updateFiberHint(exact || null);
+    amountInput.focus();
+  }
+});
+
+/* 行を追加する実装 */
+function addRow(){
+  const foodName = foodInput.value.trim();
+  const amountVal = parseFloat(amountInput.value);
+  if (!foodName) { alert("食材名を入力してください（候補から選択してください）"); return; }
+  const foodObj = findFoodByName(foodName);
+  if (!foodObj) {
+    if (!confirm(`"${foodName}" は候補にありません。\nこのまま登録しますか？（100gあたりの繊維量は0として扱います）`)) return;
+  }
+  if (isNaN(amountVal) || amountVal <= 0) { alert("正しい摂取量（g）を入力してください"); return; }
+
+  const fiberPer100 = foodObj ? Number(foodObj.fiber) : 0;
+  const fiberAmount = (fiberPer100 * amountVal / 100);
+
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${escapeHtml(foodName)}</td>
+    <td><div style="display:flex;gap:6px;align-items:center"><input type="number" class="amt" value="${amountVal}" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px" /></div></td>
+    <td><input type="number" class="per100" value="${fiberPer100}" step="any" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px" /></td>
+    <td class="right">${fiberAmount.toFixed(2)}</td>
+    <td><button class="del">削除</button></td>
+  `;
+  // 追加イベント: 編集時に合計を再計算
+  tr.querySelector('.amt').addEventListener('input', function(){
+    recalcRow(tr);
+    calculateTotal();
+  });
+  tr.querySelector('.per100').addEventListener('input', function(){
+    recalcRow(tr);
+    calculateTotal();
+  });
+  tr.querySelector('.del').addEventListener('click', function(){
+    tr.remove();
+    calculateTotal();
+  });
+
+  tbody.appendChild(tr);
+  calculateTotal();
+
+  // 追加後クリア
+  foodInput.value = '';
+  amountInput.value = '';
+  updateFiberHint(null);
+  suggestBox.style.display = 'none';
+}
+
+/* 行の再計算 */
+function recalcRow(tr) {
+  const amt = parseFloat(tr.querySelector('.amt').value) || 0;
+  const per100 = parseFloat(tr.querySelector('.per100').value) || 0;
+  const val = (per100 * amt / 100);
+  tr.cells[3].textContent = val.toFixed(2);
+}
+
+/* 合計計算 */
+function calculateTotal(){
+  let total = 0;
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const val = parseFloat(tr.cells[3].textContent) || 0;
+    total += val;
+  });
+  totalEl.textContent = `合計食物繊維量: ${total.toFixed(2)} g`;
+}
+
+/* HTML エスケープ */
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
+}
+
+/* 初期行（空行1つ） */
+(function init(){
+  // 空の入力行ではなく、利用者が追加するスタイルにしているため初期行は無し。
+  // ただし、もし初期1行が欲しい場合は以下をアンコメント：
+  // addRow();
+})();
+
+</script>
+</body>
+</html>
